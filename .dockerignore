@@ -1,0 +1,20 @@
+# Keep the build context small and secret-free
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+tests/
+.git/
+.github/
+terraform/
+docs/
+postman/
+.env
+.env.*
+*.md
+.DS_Store
+.vscode/
