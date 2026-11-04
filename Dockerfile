@@ -26,6 +26,18 @@ RUN groupadd --system app \
 
 WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
+
+# Hardening: the runtime never installs packages, so remove pip/setuptools/wheel
+# from both the base image and the venv (also removes CVE-2025-47273 in the
+# base image's bundled setuptools 70.3.0).
+RUN /usr/local/bin/python -m pip uninstall -y pip setuptools wheel 2>/dev/null; \
+    /opt/venv/bin/python -m pip uninstall -y pip setuptools wheel 2>/dev/null; \
+    rm -rf /usr/local/lib/python3.12/ensurepip \
+           /usr/local/lib/python3.12/site-packages/setuptools* \
+           /usr/local/lib/python3.12/site-packages/pip* \
+           /usr/local/bin/pip* ; \
+    true
+
 COPY --chown=app:app app ./app
 
 USER app
