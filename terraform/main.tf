@@ -69,10 +69,11 @@ module "ec2" {
 }
 
 module "github_oidc" {
-  source       = "./modules/github-oidc"
-  name         = local.name
-  region       = var.aws_region
-  github_repo  = var.github_repo
-  ecr_repo_arn = module.ecr.repository_arn
-  instance_arn = module.ec2.instance_arn
+  source          = "./modules/github-oidc"
+  name            = local.name
+  region          = var.aws_region
+  github_repo     = var.github_repo
+  github_repo_ids = var.github_repo_ids
+  ecr_repo_arn    = module.ecr.repository_arn
+  instance_arn    = module.ec2.instance_arn
 }

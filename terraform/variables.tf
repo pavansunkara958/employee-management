@@ -28,3 +28,8 @@ variable "app_ingress_cidr" {
   description = "Who may reach port 8080: 0.0.0.0/0 for the demo, or your.ip/32"
   default     = "0.0.0.0/0"
 }
+
+variable "github_repo_ids" {
+  type        = string
+  description = "owner@id/repo@id form of the repo, used in GitHub OIDC sub claims"
+}

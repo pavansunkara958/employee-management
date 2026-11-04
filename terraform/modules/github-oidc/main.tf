@@ -16,7 +16,10 @@ resource "aws_iam_role" "github" {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           # ONLY this repo, ONLY the main branch
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:ref:refs/heads/main",
+            "repo:${var.github_repo_ids}:ref:refs/heads/main",
+          ]
         }
       }
     }]

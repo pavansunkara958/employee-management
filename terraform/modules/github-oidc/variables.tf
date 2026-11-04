@@ -18,3 +18,8 @@ variable "ecr_repo_arn" {
 variable "instance_arn" {
   type = string
 }
+
+variable "github_repo_ids" {
+  type        = string
+  description = "owner@id/repo@id, as GitHub sends it in the OIDC sub claim"
+}
