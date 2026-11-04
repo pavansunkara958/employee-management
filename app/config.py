@@ -12,4 +12,4 @@ def database_url() -> URL:
         host=os.getenv("DB_HOST", "localhost"),
         port=int(os.getenv("DB_PORT", "5432")),
         database=os.getenv("DB_NAME", "employees"),
-    )
+    )DEFAULT_ADMIN_PASSWORD = "admin123"
