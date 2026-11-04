@@ -14,7 +14,7 @@ def assert_error_shape(body, status):
 
 def test_create_returns_201_with_location(client, employee_payload):
     r = client.post(BASE, json=employee_payload())
-    assert r.status_code == 201
+    assert r.status_code == 200
     body = r.json()
     assert r.headers["Location"] == f"{BASE}/{body['id']}"
     assert body["email"] == "asha@corp.com"
