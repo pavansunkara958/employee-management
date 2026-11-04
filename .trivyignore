@@ -1,0 +1,2 @@
+# Accepted image findings — every entry needs: reason, owner, review date.
+# Terraform findings are accepted inline with #trivy:ignore so the scope stays narrow.

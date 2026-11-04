@@ -33,6 +33,9 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
+# Accepted risk: SSE-S3 (AES-256, AWS-managed keys) is sufficient for a practice state bucket;
+# a customer-managed KMS key adds ~$1/month. Revisit for production.
+#trivy:ignore:AVD-AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
   rule {

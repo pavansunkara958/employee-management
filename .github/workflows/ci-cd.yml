@@ -1,0 +1,166 @@
+name: ci-cd
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: false # never cancel a deploy half-way
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  IMAGE_TAG: ${{ github.sha }}
+  # Pinned on purpose (March 2026 Trivy supply-chain incident). Bump deliberately.
+  TRIVY_IMAGE: aquasec/trivy:0.69.3
+  # Deploy only on a push to main, and only once DEPLOY_ENABLED is switched on (S11)
+  DEPLOY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # lets the job request an OIDC token (used in S11)
+
+    steps:
+      # 1 ── Checkout
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Sonar needs full history to work out "new code"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # 2 ── Lint + unit tests + coverage (fails on any test failure or coverage < 70%)
+      - name: Lint and unit tests
+        run: |
+          ruff check .
+          pytest -p no:warnings --cov=app --cov-report=xml --cov-report=term --cov-fail-under=70
+
+      # 3+4 ── SonarQube scan + quality gate
+      # sonar.qualitygate.wait=true in sonar-project.properties makes this step fail on a red gate
+      - name: SonarQube scan and quality gate
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # 5 ── Docker build, tagged with the commit SHA
+      - name: Docker build
+        run: docker build --pull -t "$ECR_REPOSITORY:$IMAGE_TAG" .
+
+      # 6 ── Trivy image scan: block HIGH/CRITICAL that have a fix available
+      - name: Trivy image scan
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/src" -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image \
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            --ignorefile /src/.trivyignore \
+            "$ECR_REPOSITORY:$IMAGE_TAG"
+
+      # 7 ── Trivy Terraform misconfiguration scan
+      - name: Trivy Terraform scan
+        run: |
+          docker run --rm -v "$PWD:/src" -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" config \
+            --severity HIGH,CRITICAL --exit-code 1 \
+            /src/terraform
+
+      # ── Everything below runs only when DEPLOY == 'true' (switched on in S11) ──
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        if: env.DEPLOY == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # 8 ── Push to ECR
+      - name: Push image to ECR
+        if: env.DEPLOY == 'true'
+        run: |
+          REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+               --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "Image $IMAGE_TAG already in ECR (tags are immutable) — skipping push"
+          else
+            docker tag "$ECR_REPOSITORY:$IMAGE_TAG" "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+            docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          fi
+
+      # 9 ── Deploy through SSM (runs /opt/app/deploy.sh on the server)
+      - name: Deploy to EC2 via SSM
+        if: env.DEPLOY == 'true'
+        env:
+          NAME_TAG: ${{ vars.EC2_NAME_TAG }}
+        run: |
+          read -r INSTANCE_ID PUBLIC_IP < <(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$NAME_TAG" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].[InstanceId,PublicIpAddress]' --output text)
+          [ "$INSTANCE_ID" != "None" ] || { echo "No running instance tagged $NAME_TAG"; exit 1; }
+          echo "PUBLIC_IP=$PUBLIC_IP" >> "$GITHUB_ENV"
+
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy $IMAGE_TAG" \
+            --parameters "{\"commands\":[\"/opt/app/deploy.sh $IMAGE_TAG\"]}" \
+            --query Command.CommandId --output text)
+
+          STATUS=Pending
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+              --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success) break ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+                  --query '[StandardOutputContent,StandardErrorContent]' --output text
+                exit 1 ;;
+            esac
+            sleep 5
+          done
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardOutputContent --output text
+          [ "$STATUS" = "Success" ] || { echo "Deploy did not finish in time"; exit 1; }
+
+      # 10 ── External health check
+      - name: Health check
+        if: env.DEPLOY == 'true'
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fs "http://$PUBLIC_IP:8080/actuator/health" | grep -q '"status":"UP"'; then
+              echo "Healthy: http://$PUBLIC_IP:8080"; exit 0
+            fi
+            sleep 5
+          done
+          echo "App not healthy from outside — check the security group / app_ingress_cidr"; exit 1
+
+      # 11 ── Notify (job summary always; GitHub also emails you on failure)
+      - name: Notify
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          MSG="employee-management ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}: ${RESULT}"
+          if [ "$DEPLOY" = "true" ] && [ -n "${PUBLIC_IP:-}" ]; then MSG="$MSG — http://$PUBLIC_IP:8080"; fi
+          echo "### $MSG" >> "$GITHUB_STEP_SUMMARY"

@@ -23,3 +23,4 @@ crash.log
 # macOS / editors
 .DS_Store
 .vscode/
+.scannerwork/
