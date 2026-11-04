@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euxo pipefail
+dnf install -y docker jq
+systemctl enable --now docker
+
+# t3.micro has 1 GB RAM — add 1 GB swap so the container does not get OOM-killed
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=1024
+  chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+fi
+
+mkdir -p /opt/app
+cat > /opt/app/config.env <<'EOF'
+AWS_REGION=${region}
+ECR_REPO=${ecr_repo_url}
+DB_SECRET_ARN=${db_secret_arn}
+DB_HOST=${db_host}
+DB_NAME=${db_name}
+LOG_GROUP=${log_group}
+EOF
+echo '${deploy_script_b64}' | base64 -d > /opt/app/deploy.sh
+chmod 750 /opt/app/deploy.sh
