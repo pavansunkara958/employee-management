@@ -79,3 +79,30 @@ def stats(db: Session) -> dict:
         "byDepartment": by_dept,
         "averageSalary": round(avg, 2) if avg is not None else None,
     }
+
+def salary_band(salary: float, department: str, years: int) -> str:
+    """S12 demo: deliberately untested code — the SonarQube gate should block it."""
+    if salary <= 0:
+        raise ValueError("salary must be positive")
+    if department == "IT":
+        if salary >= 150000:
+            band = "IT-L5"
+        elif salary >= 100000:
+            band = "IT-L4"
+        elif salary >= 70000:
+            band = "IT-L3"
+        else:
+            band = "IT-L2"
+    elif department == "Finance":
+        band = "FIN-SR" if salary >= 90000 else "FIN-JR"
+    elif department == "HR":
+        band = "HR-SR" if salary >= 80000 else "HR-JR"
+    else:
+        band = "GEN"
+    if years >= 10:
+        band += "-veteran"
+    elif years >= 5:
+        band += "-experienced"
+    elif years < 1:
+        band += "-new"
+    return band
