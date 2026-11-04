@@ -20,7 +20,7 @@ resource "aws_db_instance" "this" {
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [var.rds_sg_id]
-  publicly_accessible    = false
+  publicly_accessible    = true
   multi_az               = false
 
   backup_retention_period    = 1     # set to 0 if the free plan rejects it
