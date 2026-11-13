@@ -16,6 +16,12 @@ RUN pip install --upgrade pip setuptools \
 # ---------- Stage 2: runtime — slim Python + the venv + app code only ----------
 FROM python:3.12-slim
 
+# Apply Debian security fixes not yet in the base image
+# (e.g. zlib1g CVE-2026-76844, CVE-2026-85091)
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
